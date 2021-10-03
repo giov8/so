@@ -36,14 +36,14 @@ void queue_print (char *name, queue_t *queue, void print_elem (void*) )
 
     printf("[");
     if (queue == NULL) {
-        // A fila não existe ou está vazia
+         // A fila não existe ou está vazia
         printf("]\n");
         return;
     }
 
     queue_t *elem = queue;
     if (elem == NULL) {
-            // Fila quebrada. Apontando para nulo!
+            fprintf(stderr, "ERRO: Fila quebrada. Apontando para nulo!\n");
             return;
         }
 
@@ -53,7 +53,7 @@ void queue_print (char *name, queue_t *queue, void print_elem (void*) )
     while (queue != elem)
     {
         if (elem == NULL) {
-            // Fila quebrada. Apontando para nulo!
+            fprintf(stderr, "ERRO: Fila quebrada. Apontando para nulo!\n");
             return;
         }
 
@@ -69,17 +69,17 @@ void queue_print (char *name, queue_t *queue, void print_elem (void*) )
 int queue_append (queue_t **queue, queue_t *elem)
 {
     if (queue == NULL) {
-        // A fila não existe
+        fprintf(stderr, "ERRO: A fila não existe.\n");
         return -1;
     }
 
     if (elem == NULL) {
-        // Elemento não existe
+        fprintf(stderr, "ERRO: Elemento não existe.\n");
         return -2;
     }
 
     if ((elem->next != NULL) || (elem->prev != NULL)) {
-        // Elemento está em outra fila
+        fprintf(stderr, "ERRO: Elemento está em outra fila.\n");
         return -3;
     }
 
@@ -96,7 +96,7 @@ int queue_append (queue_t **queue, queue_t *elem)
     queue_t *aux = (*queue);
     do {
         if (aux == elem) {
-            // Elemento já está na fila!
+            fprintf(stderr, "ERRO: Elemento já está na fila!\n");
             return -8;
         }
         aux = aux->next;
@@ -114,22 +114,22 @@ int queue_append (queue_t **queue, queue_t *elem)
 int queue_remove (queue_t **queue, queue_t *elem)
 {
     if (queue == NULL) {
-        // A fila não existe
+        fprintf(stderr, "ERRO: A fila não existe\n");
         return -1;
     }
 
     if (elem == NULL) {
-        // Elemento não existe
+        fprintf(stderr, "ERRO: Elemento não existe.\n");
         return -2;
     }
 
     if ((*queue) == NULL) {
-        // A fila está vazia
+        fprintf(stderr, "ERRO: A fila está vazia.\n");
         return -4;
     }
 
     if ((elem->next == NULL) || (elem->prev == NULL)) {
-        // Elemento não está em uma fila
+        fprintf(stderr, "ERRO: Elemento não está em uma fila.\n");
         return -5;
     }
 
@@ -160,7 +160,7 @@ int queue_remove (queue_t **queue, queue_t *elem)
     while (aux != (*queue))
     {
         if (aux == NULL) {
-            // Fila quebrada. Apontando para nulo!
+            fprintf(stderr, "ERRO: Fila quebrada. Apontando para nulo!\n");
             return -7;
         }
 
@@ -177,7 +177,7 @@ int queue_remove (queue_t **queue, queue_t *elem)
         aux = aux->next;
     }
 
-    //Elemento não está na fila!
+    fprintf(stderr, "ERRO: Elemento a ser removido não está na fila!\n");
     return -6;
 }
 

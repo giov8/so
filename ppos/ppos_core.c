@@ -101,15 +101,19 @@ int task_create (task_t *task,			// descritor da nova tarefa
     task->next = NULL ;
 
     #ifdef DEBUG
-        printf("PPOS: tarefa %d foi criada\n", task->id) ;
+        printf("PPOS: a tarefa %d foi criada pela tarefa %d\n", task->id, CurrentTask->id) ;
     #endif
 
-    return (0) ;
+    return (task->id) ;
 }
 
 // Termina a tarefa corrente, indicando um valor de status encerramento
 void task_exit (int exitCode)
 {
+    #ifdef DEBUG
+        printf("PPOS: a tarefa %d será encerrada\n", task_id()) ;
+    #endif
+
     if (!CurrentTask)
     {
         perror("Não é possível terminar tarefa vazia: ") ;
@@ -122,36 +126,44 @@ void task_exit (int exitCode)
         return ;
     }
 
-    CurrentTask->id = -1 ;
+    #ifdef DEBUG
+        //printf("Vou free() a task %d\n", task_id()) ;
+    #endif
+    //free (CurrentTask->context.uc_stack.ss_sp) ;
+    #ifdef DEBUG
+        //printf("PPOS: Free() aconteceu com sucesso\n") ;
+    #endif
+
+    CurrentTask = NULL ;
     task_switch(&MainTask) ;
 }
 
 // alterna a execução para a tarefa indicada
 int task_switch (task_t *task)
 {   
-     #ifdef DEBUG
-        printf("PPOS: Tentativa: trocar tarefa %d por %d\n", task_id(CurrentTask), task_id(task)) ;
-    #endif
-
     if (!task)
     {
         perror (" Erro na criação troca de tarefas, task inválido: ") ;
         return (-2) ;
     }
 
-    // se foi usado o task_exit
-    if (task->id < 0)
-    {
-        free (task->context.uc_stack.ss_sp) ;
+    if (!CurrentTask) {
+        #ifdef DEBUG
+            printf("PPOS: será trocada para tarefa %d\n", task->id) ;
+        #endif
 
-        // a principio apenas volta para o programa principal
-        CurrentTask = &MainTask ;
+        CurrentTask = task ;
+        setcontext(&task->context) ;
         return (0) ;
     }
 
-    ucontext_t old_current_task = CurrentTask->context ;          // usado para salvar o contexto que estava ocorrendo antes da troca
+    #ifdef DEBUG
+        printf("PPOS: a tarefa %d será trocada pela tarefa %d\n", task_id(), task->id) ;
+    #endif
+
+    ucontext_t *old_current_task = &CurrentTask->context ;          // usado para salvar o contexto que estava ocorrendo antes da troca
     CurrentTask = task ;                                          // é preciso a mudar variável global antes de mudar de contexto
-    swapcontext (&old_current_task, &task->context) ;
+    swapcontext (old_current_task, &task->context) ;
 
     return (0) ;
 }

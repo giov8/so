@@ -10,9 +10,80 @@
 
 #define STACKSIZE 64*1024	/* tamanho de pilha das threads */
 
-unsigned int TaskIDCounter ;     // contador de IDs para criação de tarefas
-task_t MainTask ;                // Tarefa principal 
-task_t *CurrentTask ;            // aponta para tarefa atual
+int TaskIDCounter, UserTasks ;                             // contador de IDs para criação de tarefas e quantidade de tarefas do usuário
+task_t MainTask, DispatcherTask ;                          // Tarefa principal e Dispatcher
+task_t *CurrentTask, *ReadyQueue ;                         // aponta para tarefa atual e para a tarefa que tem o Dispatcher
+
+// funções internas ==============================================================
+
+// Faz o escalonamento de tarefas
+task_t* scheduler()
+{
+    return ReadyQueue ;
+}
+
+// Libera as estruturas usadas nas tarefa
+int free_task_structures (task_t *task) {
+    if (!task)
+    {
+        perror ("Erro, task inválido: ") ;
+        return (-2) ;
+    }
+
+    #ifdef DEBUG
+        //printf("Vou free() a task %d\n", task_id()) ;
+    #endif
+
+    free (task->context.uc_stack.ss_sp) ;
+
+    #ifdef DEBUG
+        //printf("PPOS: Free() aconteceu com sucesso\n") ;
+    #endif
+
+    return (0);
+}
+
+// Faz o controle geral do programa
+void dispatcher ()
+{
+    task_t* next ;
+
+    while (UserTasks > 0)
+    {
+        next = scheduler() ;
+        if (next)
+        {
+            task_switch(next) ;
+
+            switch (next->state)
+            {
+                case READY:
+                    // Faz a fila andar
+                    ReadyQueue = ReadyQueue->next ;
+                    break;
+
+                case EXITED:
+                    // Remove da fila
+                    queue_remove((queue_t **) &ReadyQueue, (queue_t *) next) ;
+                    free_task_structures(next) ;
+                    break ;
+
+                default:
+                    perror("Estado da tarefa está inválido.") ;
+                    exit (1) ;
+            }
+        }
+        else
+        {
+            #ifdef DEBUG
+                printf ("PPOS: Proxima tarefa devolvida como nula\n") ;
+            #endif
+            break ;
+        }
+    }
+    task_exit (0) ;
+}
+
 
 // funções gerais ==============================================================
 
@@ -23,6 +94,8 @@ void ppos_init ()
 
     // definições das variávies globais
     TaskIDCounter = 0 ;
+    UserTasks = 0 ;                        
+    ReadyQueue = NULL ;
     
     // Configuração da tarefa principal
     getcontext(&MainTask.context) ;
@@ -48,6 +121,8 @@ void ppos_init ()
 
     CurrentTask = &MainTask ;
 
+    task_create (&DispatcherTask, dispatcher, "dispatcher") ;
+
     #ifdef DEBUG
     printf ("PPOS: Ping Pong OS inicializado\n") ;
     #endif
@@ -55,10 +130,7 @@ void ppos_init ()
 
 // gerência de tarefas =========================================================
 
-// Cria uma nova tarefa. Retorna um ID> 0 ou erro.
-int task_create (task_t *task,			// descritor da nova tarefa
-                 void (*start_func)(void *),	// funcao corpo da tarefa
-                 void *arg)			// argumentos para a tarefa
+int task_create (task_t *task, void (*start_func)(void *), void *arg)
 {
     if (!task)
     {
@@ -72,7 +144,7 @@ int task_create (task_t *task,			// descritor da nova tarefa
         return (-3) ;
     }
 
-    // Faz a configuração do contexto
+    // Faz a configuração do contexto da tarefa
     char *stack ;
 
     getcontext (&task->context) ;
@@ -92,13 +164,19 @@ int task_create (task_t *task,			// descritor da nova tarefa
    }
 
     makecontext (&task->context, (void*)(*start_func), 1, arg) ;
-    
-    // Faz configuração dos demais campos da task_t
+
     TaskIDCounter++ ;
+    // Se não for main ou o dispatcher:
+    if (TaskIDCounter > 1)
+    {
+        // Incrementa contator de tarefas de usuário ativas
+        UserTasks++ ;
+        // Adiciona a fila de prontas
+        queue_append ((queue_t **) &ReadyQueue, (queue_t *) task) ;
+    }
+
     task->id = (int) TaskIDCounter ;
-    
-    task->prev = NULL ;
-    task->next = NULL ;
+    task->state = READY ;
 
     #ifdef DEBUG
         printf("PPOS: a tarefa %d foi criada pela tarefa %d\n", task->id, CurrentTask->id) ;
@@ -107,7 +185,6 @@ int task_create (task_t *task,			// descritor da nova tarefa
     return (task->id) ;
 }
 
-// Termina a tarefa corrente, indicando um valor de status encerramento
 void task_exit (int exitCode)
 {
     #ifdef DEBUG
@@ -126,35 +203,17 @@ void task_exit (int exitCode)
         return ;
     }
 
-    #ifdef DEBUG
-        //printf("Vou free() a task %d\n", task_id()) ;
-    #endif
-    //free (CurrentTask->context.uc_stack.ss_sp) ;
-    #ifdef DEBUG
-        //printf("PPOS: Free() aconteceu com sucesso\n") ;
-    #endif
-
-    CurrentTask = NULL ;
-    task_switch(&MainTask) ;
+    CurrentTask->state = EXITED ;
+    UserTasks-- ;
+    task_yield () ;
 }
 
-// alterna a execução para a tarefa indicada
 int task_switch (task_t *task)
 {   
     if (!task)
     {
         perror (" Erro na criação troca de tarefas, task inválido: ") ;
         return (-2) ;
-    }
-
-    if (!CurrentTask) {
-        #ifdef DEBUG
-            printf("PPOS: será trocada para tarefa %d\n", task->id) ;
-        #endif
-
-        CurrentTask = task ;
-        setcontext(&task->context) ;
-        return (0) ;
     }
 
     #ifdef DEBUG
@@ -180,4 +239,27 @@ int task_id ()
         perror("Erro ao adquirir ID da Tarefa: ") ;
         return (-1) ;
     }
+}
+
+// operações de escalonamento ==================================================
+
+// libera o processador para a próxima tarefa, retornando à fila de tarefas
+// prontas ("ready queue")
+void task_yield ()
+{   
+    #ifdef DEBUG
+        printf("PPOS: a tarefa %d passa o controle do processador", task_id()) ;
+    #endif
+    
+    // Se foi o proprio que chamou yield, retorna o processador para a tarefa main 
+    if (CurrentTask == &DispatcherTask)
+    {
+        task_switch(&MainTask) ;
+    }
+
+    // Se foi outra tarefa que chamou yield, retorna o processador para a tarefa dispatcher
+    else
+    {
+        task_switch(&DispatcherTask) ;
+    }   
 }

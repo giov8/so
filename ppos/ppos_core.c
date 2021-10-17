@@ -8,7 +8,8 @@
 #include "ppos_data.h"
 #include "ppos.h"
 
-#define STACKSIZE 64*1024	/* tamanho de pilha das threads */
+#define STACKSIZE 64*1024	                                // tamanho de pilha das threads 
+#define ALPHA_AGING -1                                      // define o task aging α = -1
 
 int TaskIDCounter, UserTasks ;                             // contador de IDs para criação de tarefas e quantidade de tarefas do usuário
 task_t MainTask, DispatcherTask ;                          // Tarefa principal e Dispatcher
@@ -16,10 +17,69 @@ task_t *CurrentTask, *ReadyQueue ;                         // aponta para tarefa
 
 // funções internas ==============================================================
 
+// Faz o envelhecimento das tarefas task na frequencia task_aging
+void perform_task_aging (task_t *task, int task_aging)
+{
+    if (!task)
+    {
+        #ifdef DEBUG
+            printf("perform_task_aging: não há tasks para envelhecer") ;
+        #endif
+        return;
+    }
+
+    int new_prio ;
+    task_t* first = task ;
+    do
+    {
+        new_prio = task->prio_dinamic + task_aging ;
+
+        // Evita que a prioridade seja maior ou menos que o intervalo definido
+        if (new_prio < -20) new_prio = -20 ;
+        else if (new_prio > 20) new_prio = 20 ;
+        
+        #ifdef DEBUG
+            printf("PPOS: a prioridade da tarefa %d agora é %d\n", task->id, new_prio) ;
+        #endif
+
+        task->prio_dinamic = new_prio ;
+
+        task = task->next ;
+    } while (task != first) ;
+}
+
 // Faz o escalonamento de tarefas
 task_t* scheduler()
 {
-    return ReadyQueue ;
+    if (!ReadyQueue)
+    {
+        #ifdef DEBUG
+            printf("PPOS: scheduler encontrou fila de prontas vazias") ;
+        #endif
+
+        return NULL ;
+    }
+    
+    int higher_prio = 21 ;       // A valor da prioriedade
+    task_t* prio_task ;         // Higher priority task, tarefa com maior prioridade
+    task_t* task = ReadyQueue;
+
+    perform_task_aging (ReadyQueue, ALPHA_AGING) ;
+
+    do
+    {
+        if (task->prio_dinamic < higher_prio)
+        {
+            higher_prio = task->prio_dinamic ;
+            prio_task = task ;
+        }
+
+        task = task->next ;
+    } while (task != ReadyQueue);
+
+    // A tarefa de maior prioridade recebe sua prioridade estática
+    prio_task->prio_dinamic = task_getprio(prio_task) ;
+    return prio_task ;
 }
 
 // Libera as estruturas usadas nas tarefa
@@ -31,13 +91,13 @@ int free_task_structures (task_t *task) {
     }
 
     #ifdef DEBUG
-        //printf("Vou free() a task %d\n", task_id()) ;
+        printf("Vou free() a task %d\n", task->id) ;
     #endif
 
     free (task->context.uc_stack.ss_sp) ;
 
     #ifdef DEBUG
-        //printf("PPOS: Free() aconteceu com sucesso\n") ;
+        printf("PPOS: Free() aconteceu com sucesso\n") ;
     #endif
 
     return (0);
@@ -58,8 +118,6 @@ void dispatcher ()
             switch (next->state)
             {
                 case READY:
-                    // Faz a fila andar
-                    ReadyQueue = ReadyQueue->next ;
                     break;
 
                 case EXITED:
@@ -165,8 +223,9 @@ int task_create (task_t *task, void (*start_func)(void *), void *arg)
 
     makecontext (&task->context, (void*)(*start_func), 1, arg) ;
 
-    TaskIDCounter++ ;
-    // Se não for main ou o dispatcher:
+    TaskIDCounter++ ;                       // Incrementa contatos de IDs
+
+    // Se não for tarefa main ou o dispatcher:
     if (TaskIDCounter > 1)
     {
         // Incrementa contator de tarefas de usuário ativas
@@ -177,6 +236,8 @@ int task_create (task_t *task, void (*start_func)(void *), void *arg)
 
     task->id = (int) TaskIDCounter ;
     task->state = READY ;
+    task->prio_static = 0 ;
+    task->prio_dinamic = 0 ;
 
     #ifdef DEBUG
         printf("PPOS: a tarefa %d foi criada pela tarefa %d\n", task->id, CurrentTask->id) ;
@@ -243,12 +304,10 @@ int task_id ()
 
 // operações de escalonamento ==================================================
 
-// libera o processador para a próxima tarefa, retornando à fila de tarefas
-// prontas ("ready queue")
 void task_yield ()
 {   
     #ifdef DEBUG
-        printf("PPOS: a tarefa %d passa o controle do processador", task_id()) ;
+        printf("PPOS: a tarefa %d passa o controle do processador\n", task_id()) ;
     #endif
     
     // Se foi o proprio que chamou yield, retorna o processador para a tarefa main 
@@ -262,4 +321,52 @@ void task_yield ()
     {
         task_switch(&DispatcherTask) ;
     }   
+}
+
+// define a prioridade estática de uma tarefa (ou a tarefa atual)
+void task_setprio (task_t *task, int prio)
+{
+    // Corrige limites inferiores e superiores de prioridade
+    if (prio < -20) prio = -20 ;
+    else if (prio > 20) prio = 20 ;
+
+    if (task)
+    {
+        #ifdef DEBUG
+            printf("task_setprio: priodidade estatica da tarefa %d = %d\n", task->id, prio) ;
+        #endif
+        task->prio_static = prio ;
+        task->prio_dinamic = prio ;
+        return ;
+    }
+
+    if (CurrentTask)
+    {
+        #ifdef DEBUG
+            printf("task_setprio: priodidade estatica da tarefa (corrente) %d = %d", task->id, prio) ;
+        #endif
+        CurrentTask->prio_static = prio ;
+        task->prio_dinamic = prio ;
+        return ;
+    }
+
+    perror("task_setprio: task e CurrentTask são nulas!") ;
+    exit (1) ;
+}
+
+// retorna a prioridade estática de uma tarefa (ou a tarefa atual)
+int task_getprio (task_t *task)
+{
+    if (task)
+    {
+        return task->prio_static ;
+    }
+
+    if (CurrentTask)
+    {
+        return CurrentTask->prio_static ;
+    }
+
+    perror("task_getprio: task e CurrentTask são nulas!") ;
+    exit (1) ;
 }

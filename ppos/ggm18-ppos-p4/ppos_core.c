@@ -5,44 +5,17 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <signal.h>
-#include <sys/time.h>
 #include "ppos_data.h"
 #include "ppos.h"
 
 #define STACKSIZE 64*1024	                                // tamanho de pilha das threads 
 #define ALPHA_AGING -1                                      // define o task aging α = -1
-#define QUANTUM_SIZE 20                                     // quantidade de ticks que cada tarefa recebe para ser executada
-#define QUANTUM_SIZE_CORE 100000                            // quantidade de ticks que uma tarefa do sistema recebe para ser executada (100 segundos) (BASTANTE)
 
 int TaskIDCounter, UserTasks ;                             // contador de IDs para criação de tarefas e quantidade de tarefas do usuário
 task_t MainTask, DispatcherTask ;                          // Tarefa principal e Dispatcher
 task_t *CurrentTask, *ReadyQueue ;                         // aponta para tarefa atual e para a tarefa que tem o Dispatcher
-struct sigaction action ;                                  // define um tratador de sinal 
-struct itimerval timer ;                                   // estrutura de inicialização do timer
-unsigned int TicksRemaining ;                              // ticks que restam para a tarefa atual executar
 
-// funções timer =================================================================
-
-// trata o sinal recebido do timer
-void handler (int signum)
-{
-    // não faz preempção se for tarefa do sistema
-    if(CurrentTask->is_system_task)
-        return ;
-    
-    if (TicksRemaining > 0)
-    {
-        TicksRemaining-- ;
-    }
-    else
-    {
-        task_yield() ;
-    }
-}
-
-
-// funções dispatcher/scheduler ==================================================
+// funções internas ==============================================================
 
 // Faz o envelhecimento das tarefas task na frequencia task_aging
 void perform_task_aging (task_t *task, int task_aging)
@@ -203,36 +176,10 @@ void ppos_init ()
     MainTask.id = (int) TaskIDCounter ;
     MainTask.prev = NULL ;
     MainTask.next = NULL ;
-    MainTask.is_system_task = 1 ;
 
     CurrentTask = &MainTask ;
 
-    // Criação do Dispatcher (tarefa 1)
     task_create (&DispatcherTask, dispatcher, "dispatcher") ;
-
-    // Configuração de sinais e tempo:
-    // registra a ação para o sinal de timer SIGALRM
-    action.sa_handler = handler ;
-    sigemptyset (&action.sa_mask) ;
-    action.sa_flags = 0 ;
-    if (sigaction (SIGALRM, &action, 0) < 0)
-    {
-        perror ("Erro em sigaction: ") ;
-        exit (1) ;
-    }
-
-    // ajusta valores do temporizador
-    timer.it_value.tv_usec = 1000 ;     // primeiro disparo, em micro-segundos
-    timer.it_value.tv_sec  = 0 ;      // primeiro disparo, em segundos
-    timer.it_interval.tv_usec = 1000 ;   // disparos subsequentes, em micro-segundos
-    timer.it_interval.tv_sec  = 0 ;   // disparos subsequentes, em segundos
-
-    // arma o temporizador ITIMER_REAL (vide man setitimer)
-    if (setitimer (ITIMER_REAL, &timer, 0) < 0)
-    {
-        perror ("Erro em setitimer: ") ;
-        exit (1) ;
-    }
 
     #ifdef DEBUG
     printf ("PPOS: Ping Pong OS inicializado\n") ;
@@ -243,8 +190,6 @@ void ppos_init ()
 
 int task_create (task_t *task, void (*start_func)(void *), void *arg)
 {
-    TicksRemaining = QUANTUM_SIZE_CORE ;                            // para evitar que funções de nucleo sofram preempção
-
     if (!task)
     {
         perror ("Erro na criação de nova tarefa, task inválido: ") ;
@@ -279,14 +224,14 @@ int task_create (task_t *task, void (*start_func)(void *), void *arg)
     makecontext (&task->context, (void*)(*start_func), 1, arg) ;
 
     TaskIDCounter++ ;                       // Incrementa contatos de IDs
-    task->is_system_task = 1 ;              
 
     // Se não for tarefa main ou o dispatcher:
     if (TaskIDCounter > 1)
     {
-        task->is_system_task = 0 ;                                          // não é tarefa do sistema
-        UserTasks++ ;                                                       // Incrementa contator de tarefas de usuário ativas
-        queue_append ((queue_t **) &ReadyQueue, (queue_t *) task) ;         // Adiciona a fila de prontas
+        // Incrementa contator de tarefas de usuário ativas
+        UserTasks++ ;
+        // Adiciona a fila de prontas
+        queue_append ((queue_t **) &ReadyQueue, (queue_t *) task) ;
     }
 
     task->id = (int) TaskIDCounter ;
@@ -303,8 +248,6 @@ int task_create (task_t *task, void (*start_func)(void *), void *arg)
 
 void task_exit (int exitCode)
 {
-    TicksRemaining = QUANTUM_SIZE_CORE ;                            // para evitar que funções de nucleo sofram preempção
-
     #ifdef DEBUG
         printf("PPOS: a tarefa %d será encerrada\n", task_id()) ;
     #endif
@@ -328,8 +271,6 @@ void task_exit (int exitCode)
 
 int task_switch (task_t *task)
 {   
-    TicksRemaining = QUANTUM_SIZE_CORE ;                            // para evitar que funções de nucleo sofram preempção
-
     if (!task)
     {
         perror (" Erro na criação troca de tarefas, task inválido: ") ;
@@ -341,8 +282,7 @@ int task_switch (task_t *task)
     #endif
 
     ucontext_t *old_current_task = &CurrentTask->context ;          // usado para salvar o contexto que estava ocorrendo antes da troca
-    CurrentTask = task ;                                            // é preciso a mudar variável global antes de mudar de contexto
-    TicksRemaining = QUANTUM_SIZE ;                                 // a tarefa recebera um quantum para executar
+    CurrentTask = task ;                                          // é preciso a mudar variável global antes de mudar de contexto
     swapcontext (old_current_task, &task->context) ;
 
     return (0) ;
@@ -366,8 +306,6 @@ int task_id ()
 
 void task_yield ()
 {   
-    TicksRemaining = QUANTUM_SIZE_CORE ;                            // para evitar que funções de nucleo sofram preempção
-    
     #ifdef DEBUG
         printf("PPOS: a tarefa %d passa o controle do processador\n", task_id()) ;
     #endif

@@ -20,7 +20,6 @@ typedef struct task_t
    enum states_e state ;          // salva o estado da tarefa
    int prio_static ;              // Prioridade estática
    int prio_dinamic ;             // prioridade dinâmica
-   int is_system_task ;           // boleano, caso true: a tarefa é do sistema
    // ... (outros campos serão adicionados mais tarde)
 } task_t ;
 

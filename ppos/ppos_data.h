@@ -21,6 +21,10 @@ typedef struct task_t
    int prio_static ;              // Prioridade estática
    int prio_dinamic ;             // prioridade dinâmica
    int is_system_task ;           // boleano, caso true: a tarefa é do sistema
+   unsigned int start_time ;      // momento de inicio da tarefa
+   unsigned int exit_time ;       // momento de fim da tarefa
+   unsigned int processor_time ;  // acumulado do tempo de processador da tarefa
+   unsigned int activations ;     // quantidade de vezes que a tarefa foi acionada
    // ... (outros campos serão adicionados mais tarde)
 } task_t ;
 

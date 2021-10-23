@@ -20,13 +20,16 @@ task_t MainTask, DispatcherTask ;                          // Tarefa principal e
 task_t *CurrentTask, *ReadyQueue ;                         // aponta para tarefa atual e para a tarefa que tem o Dispatcher
 struct sigaction action ;                                  // define um tratador de sinal 
 struct itimerval timer ;                                   // estrutura de inicialização do timer
-unsigned int TicksRemaining ;                              // ticks que restam para a tarefa atual executar
+unsigned int TicksRemaining, TicksTimer ;                  // ticks que restam para a tarefa atual executar e o total de ticks que aconteceram no programa
+unsigned int ProcessorYieldTime ;                          // momento que o processador foi entregue a tarefa atual
 
 // funções timer =================================================================
 
 // trata o sinal recebido do timer
 void handler (int signum)
 {
+    TicksTimer++ ;
+
     // não faz preempção se for tarefa do sistema
     if(CurrentTask->is_system_task)
         return ;
@@ -39,6 +42,12 @@ void handler (int signum)
     {
         task_yield() ;
     }
+}
+
+// retorna o relógio atual (em milisegundos)
+unsigned int systime ()
+{
+    return TicksTimer ;
 }
 
 
@@ -212,6 +221,9 @@ void ppos_init ()
 
     // Configuração de sinais e tempo:
     // registra a ação para o sinal de timer SIGALRM
+    TicksTimer = 0 ;
+    ProcessorYieldTime = 0 ;
+
     action.sa_handler = handler ;
     sigemptyset (&action.sa_mask) ;
     action.sa_flags = 0 ;
@@ -222,10 +234,10 @@ void ppos_init ()
     }
 
     // ajusta valores do temporizador
-    timer.it_value.tv_usec = 1000 ;     // primeiro disparo, em micro-segundos
-    timer.it_value.tv_sec  = 0 ;      // primeiro disparo, em segundos
-    timer.it_interval.tv_usec = 1000 ;   // disparos subsequentes, em micro-segundos
-    timer.it_interval.tv_sec  = 0 ;   // disparos subsequentes, em segundos
+    timer.it_value.tv_usec = 1000 ;             // primeiro disparo, em micro-segundos
+    timer.it_value.tv_sec  = 0 ;                // primeiro disparo, em segundos
+    timer.it_interval.tv_usec = 1000 ;          // disparos subsequentes, em micro-segundos
+    timer.it_interval.tv_sec  = 0 ;             // disparos subsequentes, em segundos
 
     // arma o temporizador ITIMER_REAL (vide man setitimer)
     if (setitimer (ITIMER_REAL, &timer, 0) < 0)
@@ -233,6 +245,7 @@ void ppos_init ()
         perror ("Erro em setitimer: ") ;
         exit (1) ;
     }
+
 
     #ifdef DEBUG
     printf ("PPOS: Ping Pong OS inicializado\n") ;
@@ -293,6 +306,9 @@ int task_create (task_t *task, void (*start_func)(void *), void *arg)
     task->state = READY ;
     task->prio_static = 0 ;
     task->prio_dinamic = 0 ;
+    task->processor_time = 0 ;
+    task->activations = 0 ;
+    task->start_time = systime() ;
 
     #ifdef DEBUG
         printf("PPOS: a tarefa %d foi criada pela tarefa %d\n", task->id, CurrentTask->id) ;
@@ -322,7 +338,12 @@ void task_exit (int exitCode)
     }
 
     CurrentTask->state = EXITED ;
+    CurrentTask->exit_time = systime () ;
     UserTasks-- ;
+
+    printf("Task %d exit: execution time %u ms, processor time %u ms, %u ativations\n",
+        CurrentTask->id, CurrentTask->exit_time - CurrentTask->start_time, CurrentTask->processor_time, CurrentTask->activations) ;
+
     task_yield () ;
 }
 
@@ -333,16 +354,20 @@ int task_switch (task_t *task)
     if (!task)
     {
         perror (" Erro na criação troca de tarefas, task inválido: ") ;
-        return (-2) ;
+        exit (1) ;
     }
 
     #ifdef DEBUG
         printf("PPOS: a tarefa %d será trocada pela tarefa %d\n", task_id(), task->id) ;
     #endif
 
-    ucontext_t *old_current_task = &CurrentTask->context ;          // usado para salvar o contexto que estava ocorrendo antes da troca
-    CurrentTask = task ;                                            // é preciso a mudar variável global antes de mudar de contexto
-    TicksRemaining = QUANTUM_SIZE ;                                 // a tarefa recebera um quantum para executar
+    CurrentTask->processor_time += systime () - ProcessorYieldTime ;    // acrescenta o tempo de processador para a tarefa que estava executando
+    ucontext_t *old_current_task = &CurrentTask->context ;              // usado para salvar o contexto que estava ocorrendo antes da troca
+
+    CurrentTask = task ;                                                // é preciso a mudar variável global antes de mudar de contexto
+    CurrentTask->activations++;                                         // aciona ativação da tarefa
+    ProcessorYieldTime = systime ();                                      // guarda o momento que o processador foi entregue para a tarefa
+    TicksRemaining = QUANTUM_SIZE ;                                     // a tarefa recebera um quantum para executar
     swapcontext (old_current_task, &task->context) ;
 
     return (0) ;
@@ -372,7 +397,8 @@ void task_yield ()
         printf("PPOS: a tarefa %d passa o controle do processador\n", task_id()) ;
     #endif
     
-    // Se foi o proprio que chamou yield, retorna o processador para a tarefa main 
+    
+    // Se foi o proprio Dispatcher que chamou yield, retorna o processador para a tarefa main 
     if (CurrentTask == &DispatcherTask)
     {
         task_switch(&MainTask) ;

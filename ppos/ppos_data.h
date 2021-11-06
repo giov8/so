@@ -1,6 +1,6 @@
 // PingPongOS - PingPong Operating System
 // Giovani G. Marciniak GRR20182981, DINF UFPR
-// Modificado em: 17 de Outubro  de 2021
+// Modificado em: 23 de Outubro  de 2021
 // Estruturas de dados internas do sistema operacional
 
 #ifndef __PPOS_DATA__
@@ -20,7 +20,6 @@ typedef struct task_t
    enum states_e state ;          // salva o estado da tarefa
    int prio_static ;              // Prioridade estática
    int prio_dinamic ;             // prioridade dinâmica
-   int is_system_task ;           // boleano, caso true: a tarefa é do sistema
    unsigned int start_time ;      // momento de inicio da tarefa
    unsigned int exit_time ;       // momento de fim da tarefa
    unsigned int processor_time ;  // acumulado do tempo de processador da tarefa

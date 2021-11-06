@@ -1,6 +1,6 @@
 // PingPongOS - PingPong Operating System
 // Giovani G. Marciniak GRR20182981, DINF UFPR
-// Modificado em: 17 de Outubro  de 2021
+// Modificado em: 23 de Outubro  de 2021
 // Contem as definições internas do sistema
 
 #include <stdio.h>
@@ -13,7 +13,6 @@
 #define STACKSIZE 64*1024	                                // tamanho de pilha das threads 
 #define ALPHA_AGING -1                                      // define o task aging α = -1
 #define QUANTUM_SIZE 20                                     // quantidade de ticks que cada tarefa recebe para ser executada
-#define QUANTUM_SIZE_CORE 100000                            // quantidade de ticks que uma tarefa do sistema recebe para ser executada (100 segundos) (BASTANTE)
 
 int TaskIDCounter, UserTasks ;                             // contador de IDs para criação de tarefas e quantidade de tarefas do usuário
 task_t MainTask, DispatcherTask ;                          // Tarefa principal e Dispatcher
@@ -22,6 +21,7 @@ struct sigaction action ;                                  // define um tratador
 struct itimerval timer ;                                   // estrutura de inicialização do timer
 unsigned int TicksRemaining, TicksTimer ;                  // ticks que restam para a tarefa atual executar e o total de ticks que aconteceram no programa
 unsigned int ProcessorYieldTime ;                          // momento que o processador foi entregue a tarefa atual
+int CoreFunctionAtivated;                                  // booleano que define se uma função do core está ativada, então não deve ser feira a preempção
 
 // funções timer =================================================================
 
@@ -30,8 +30,8 @@ void handler (int signum)
 {
     TicksTimer++ ;
 
-    // não faz preempção se for tarefa do sistema
-    if(CurrentTask->is_system_task)
+    // não faz preempção se estiver rodando uma tarefa do sistema/core
+    if(CoreFunctionAtivated)
         return ;
     
     if (TicksRemaining > 0)
@@ -42,7 +42,7 @@ void handler (int signum)
     {
         task_yield() ;
     }
-}
+} 
 
 // retorna o relógio atual (em milisegundos)
 unsigned int systime ()
@@ -142,6 +142,8 @@ int free_task_structures (task_t *task) {
 // Faz o controle geral do programa
 void dispatcher ()
 {
+    CoreFunctionAtivated = 1 ;
+
     task_t* next ;
 
     while (UserTasks > 0)
@@ -175,7 +177,7 @@ void dispatcher ()
             break ;
         }
     }
-    task_exit (0) ;
+    task_exit (0) ; 
 }
 
 
@@ -190,6 +192,7 @@ void ppos_init ()
     TaskIDCounter = 0 ;
     UserTasks = 0 ;                        
     ReadyQueue = NULL ;
+    CoreFunctionAtivated = 1 ;
     
     // Configuração da tarefa principal
     getcontext(&MainTask.context) ;
@@ -212,9 +215,13 @@ void ppos_init ()
     MainTask.id = (int) TaskIDCounter ;
     MainTask.prev = NULL ;
     MainTask.next = NULL ;
-    MainTask.is_system_task = 1 ;
 
     CurrentTask = &MainTask ;
+
+    UserTasks++ ;                                                               // Incrementa contator de tarefas de usuário ativas
+    queue_append ((queue_t **) &ReadyQueue, (queue_t *) &MainTask) ;             // Adiciona a fila de prontas
+
+    // =================================================
 
     // Criação do Dispatcher (tarefa 1)
     task_create (&DispatcherTask, dispatcher, "dispatcher") ;
@@ -250,13 +257,16 @@ void ppos_init ()
     #ifdef DEBUG
     printf ("PPOS: Ping Pong OS inicializado\n") ;
     #endif
+
+    CoreFunctionAtivated = 0 ;
+    task_yield () ;
 }
 
 // gerência de tarefas =========================================================
 
 int task_create (task_t *task, void (*start_func)(void *), void *arg)
 {
-    TicksRemaining = QUANTUM_SIZE_CORE ;                            // para evitar que funções de nucleo sofram preempção
+    CoreFunctionAtivated = 1 ;                            // para evitar que funções de nucleo sofram preempção
 
     if (!task)
     {
@@ -291,13 +301,11 @@ int task_create (task_t *task, void (*start_func)(void *), void *arg)
 
     makecontext (&task->context, (void*)(*start_func), 1, arg) ;
 
-    TaskIDCounter++ ;                       // Incrementa contatos de IDs
-    task->is_system_task = 1 ;              
+    TaskIDCounter++ ;                       // Incrementa contatos de IDs           
 
     // Se não for tarefa main ou o dispatcher:
     if (TaskIDCounter > 1)
-    {
-        task->is_system_task = 0 ;                                          // não é tarefa do sistema
+    {                                      
         UserTasks++ ;                                                       // Incrementa contator de tarefas de usuário ativas
         queue_append ((queue_t **) &ReadyQueue, (queue_t *) task) ;         // Adiciona a fila de prontas
     }
@@ -314,12 +322,13 @@ int task_create (task_t *task, void (*start_func)(void *), void *arg)
         printf("PPOS: a tarefa %d foi criada pela tarefa %d\n", task->id, CurrentTask->id) ;
     #endif
 
+    CoreFunctionAtivated = 0 ;
     return (task->id) ;
 }
 
 void task_exit (int exitCode)
 {
-    TicksRemaining = QUANTUM_SIZE_CORE ;                            // para evitar que funções de nucleo sofram preempção
+    CoreFunctionAtivated = 1 ;                            // para evitar que funções de nucleo sofram preempção
 
     #ifdef DEBUG
         printf("PPOS: a tarefa %d será encerrada\n", task_id()) ;
@@ -328,15 +337,9 @@ void task_exit (int exitCode)
     if (!CurrentTask)
     {
         perror("Não é possível terminar tarefa vazia: ") ;
-        return ;
+        exit(1) ;
     }
     
-    if (CurrentTask->id == 0)
-    {
-        perror("Não é possível terminar tarefa main: ") ;
-        return ;
-    }
-
     CurrentTask->state = EXITED ;
     CurrentTask->exit_time = systime () ;
     UserTasks-- ;
@@ -349,7 +352,7 @@ void task_exit (int exitCode)
 
 int task_switch (task_t *task)
 {   
-    TicksRemaining = QUANTUM_SIZE_CORE ;                            // para evitar que funções de nucleo sofram preempção
+    CoreFunctionAtivated = 1 ;                             // para evitar que funções de nucleo sofram preempção
 
     if (!task)
     {
@@ -366,8 +369,9 @@ int task_switch (task_t *task)
 
     CurrentTask = task ;                                                // é preciso a mudar variável global antes de mudar de contexto
     CurrentTask->activations++;                                         // aciona ativação da tarefa
-    ProcessorYieldTime = systime ();                                      // guarda o momento que o processador foi entregue para a tarefa
+    ProcessorYieldTime = systime ();                                    // guarda o momento que o processador foi entregue para a tarefa
     TicksRemaining = QUANTUM_SIZE ;                                     // a tarefa recebera um quantum para executar
+    CoreFunctionAtivated = 0 ;
     swapcontext (old_current_task, &task->context) ;
 
     return (0) ;
@@ -391,24 +395,19 @@ int task_id ()
 
 void task_yield ()
 {   
-    TicksRemaining = QUANTUM_SIZE_CORE ;                            // para evitar que funções de nucleo sofram preempção
+    CoreFunctionAtivated = 1;             // para evitar que funções de nucleo sofram preempção
     
     #ifdef DEBUG
         printf("PPOS: a tarefa %d passa o controle do processador\n", task_id()) ;
     #endif
     
-    
-    // Se foi o proprio Dispatcher que chamou yield, retorna o processador para a tarefa main 
-    if (CurrentTask == &DispatcherTask)
-    {
-        task_switch(&MainTask) ;
+    if (CurrentTask == &DispatcherTask) {   // Dispatcher agora será a ultima task, então ela que sairá da tarefa.
+        exit(0) ;
     }
 
-    // Se foi outra tarefa que chamou yield, retorna o processador para a tarefa dispatcher
-    else
-    {
+    else {  
         task_switch(&DispatcherTask) ;
-    }   
+    }
 }
 
 // define a prioridade estática de uma tarefa (ou a tarefa atual)

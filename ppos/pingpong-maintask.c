@@ -2,7 +2,7 @@
 // Prof. Carlos A. Maziero, DINF UFPR
 // Versão 1.1 -- Julho de 2016
 
-// Teste da contabilização - tarefas com prioridades distintas
+// Teste da tarefa main escalonável
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,8 +27,7 @@ int hardwork (int n)
 // corpo das threads
 void Body (void * arg)
 {
-   printf ("%s: inicio em %4d ms (prio: %d)\n", (char *) arg,
-           systime(), task_getprio(NULL)) ;
+   printf ("%s: inicio em %4d ms\n", (char *) arg, systime()) ;
    hardwork (WORKLOAD) ;
    printf ("%s: fim    em %4d ms\n", (char *) arg, systime()) ;
    task_exit (0) ;
@@ -36,27 +35,20 @@ void Body (void * arg)
 
 int main (int argc, char *argv[])
 {
-   printf ("main: inicio\n");
-
    ppos_init () ;
 
+   printf ("main: inicio em %4d ms\n", systime()) ;
+
    task_create (&Pang, Body, "    Pang") ;
-   task_setprio (&Pang, 0);
-
    task_create (&Peng, Body, "        Peng") ;
-   task_setprio (&Peng, -2);
-
    task_create (&Ping, Body, "            Ping") ;
-   task_setprio (&Ping, -4);
-
    task_create (&Pong, Body, "                Pong") ;
-   task_setprio (&Pong, -6);
-
    task_create (&Pung, Body, "                    Pung") ;
-   task_setprio (&Pung, -8);
 
-   task_yield () ;
+   hardwork (0.75*WORKLOAD) ;
 
-   printf ("main: fim\n");
-   exit (0);
+   printf ("main: fim    em %4d ms\n", systime()) ;
+   task_exit (0);
+
+   exit (0) ;
 }

@@ -9,7 +9,7 @@
 #include <ucontext.h>		// biblioteca POSIX de trocas de contexto
 #include "queue.h"		// biblioteca de filas genéricas
 
-enum states_e {READY, EXITED} ;
+enum states_e {READY, EXITED, SUSPENDED} ;
 
 // Estrutura que define um Task Control Block (TCB)
 typedef struct task_t
@@ -24,7 +24,8 @@ typedef struct task_t
    unsigned int exit_time ;       // momento de fim da tarefa
    unsigned int processor_time ;  // acumulado do tempo de processador da tarefa
    unsigned int activations ;     // quantidade de vezes que a tarefa foi acionada
-   // ... (outros campos serão adicionados mais tarde)
+   struct task_t *join_queue ;     // Fila que guarda todas as tarefas que estão esperando essa tarefa terminar
+   int exit_code ;                // Código de encerramento que a tarefa recebeu
 } task_t ;
 
 // estrutura que define um semáforo

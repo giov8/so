@@ -74,7 +74,7 @@ void perform_task_aging (task_t *task, int task_aging)
         if (new_prio < -20) new_prio = -20 ;
         else if (new_prio > 20) new_prio = 20 ;
         
-        #ifdef DEBUG
+        #ifdef DEBUG_PRIO
             printf("PPOS: a prioridade da tarefa %d agora é %d\n", task->id, new_prio) ;
         #endif
 
@@ -159,9 +159,13 @@ void dispatcher ()
                     break;
 
                 case EXITED:
-                    // Remove da fila
+                    // Remove da fila e libera estruturas
                     queue_remove((queue_t **) &ReadyQueue, (queue_t *) next) ;
                     free_task_structures(next) ;
+                    break ;
+                
+                case SUSPENDED:
+                    printf("Entrou em uma tarefa suspensa\n") ;
                     break ;
 
                 default:
@@ -217,6 +221,7 @@ void ppos_init ()
     MainTask.next = NULL ;
 
     CurrentTask = &MainTask ;
+    MainTask.state = READY ;
 
     UserTasks++ ;                                                               // Incrementa contator de tarefas de usuário ativas
     queue_append ((queue_t **) &ReadyQueue, (queue_t *) &MainTask) ;             // Adiciona a fila de prontas
@@ -342,7 +347,20 @@ void task_exit (int exitCode)
     
     CurrentTask->state = EXITED ;
     CurrentTask->exit_time = systime () ;
+    CurrentTask->exit_code = exitCode ;
     UserTasks-- ;
+
+    // Verifica a fila de tarefas que estão esperando e adiciona novamente na fila de prontas 
+    task_t *task ;
+    while (CurrentTask->join_queue)
+    {
+        task = CurrentTask->join_queue ;
+        // Remove da fila da tarefa
+        queue_remove((queue_t **) &CurrentTask->join_queue, (queue_t *) CurrentTask->join_queue) ;
+        // Adiciona a fila de prontas
+        queue_append ((queue_t **) &ReadyQueue, (queue_t *) task) ; 
+        task->state = READY ;
+    }
 
     printf("Task %d exit: execution time %u ms, processor time %u ms, %u ativations\n",
         CurrentTask->id, CurrentTask->exit_time - CurrentTask->start_time, CurrentTask->processor_time, CurrentTask->activations) ;
@@ -401,11 +419,13 @@ void task_yield ()
         printf("PPOS: a tarefa %d passa o controle do processador\n", task_id()) ;
     #endif
     
-    if (CurrentTask == &DispatcherTask) {   // Dispatcher agora será a ultima task, então ela que sairá da tarefa.
+    if (CurrentTask == &DispatcherTask)
+    {   // Dispatcher agora será a ultima task, então ela que sairá da tarefa.
         exit(0) ;
     }
 
-    else {  
+    else
+    {  
         task_switch(&DispatcherTask) ;
     }
 }
@@ -456,4 +476,43 @@ int task_getprio (task_t *task)
 
     perror("task_getprio: task e CurrentTask são nulas!") ;
     exit (1) ;
+}
+
+// operações de sincronização ==================================================
+
+// a tarefa corrente aguarda o encerramento de outra task
+int task_join (task_t *task)
+{
+    if (task == NULL)
+    {
+        return -1 ;
+    }
+
+    if (CurrentTask == NULL)
+    {
+        return -1 ;
+    }
+
+    if (task->state == EXITED)
+    {
+        #ifdef DEBUG
+            printf("task_join: A tarefa %d já está encerrada\n", task->id) ;
+        #endif
+        return task->exit_code ;
+    }
+
+    #ifdef DEBUG
+        printf("A tarefa %d solitou task_join() e está esperando a tarefa %d\n", CurrentTask->id, task->id) ;
+    #endif
+
+    CoreFunctionAtivated = 1 ;
+    // Remove da fila de prontas
+    queue_remove((queue_t **) &ReadyQueue, (queue_t *) CurrentTask) ;
+
+    // Adiciona a fila de join da tarefa
+    queue_append ((queue_t **) &task->join_queue, (queue_t *) CurrentTask) ; 
+
+    task_yield() ;
+
+    return task->exit_code ;  
 }

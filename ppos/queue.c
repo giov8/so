@@ -69,7 +69,7 @@ void queue_print (char *name, queue_t *queue, void print_elem (void*) )
 int queue_append (queue_t **queue, queue_t *elem)
 {
     if (queue == NULL) {
-        fprintf(stderr, "ERRO: A fila não existe.\n");
+        fprintf(stderr, "ERRO queue_append: A fila não existe.\n");
         return -1;
     }
 
@@ -114,7 +114,7 @@ int queue_append (queue_t **queue, queue_t *elem)
 int queue_remove (queue_t **queue, queue_t *elem)
 {
     if (queue == NULL) {
-        fprintf(stderr, "ERRO: A fila não existe\n");
+        fprintf(stderr, "ERRO queue_remove:  A fila não existe\n");
         return -1;
     }
 

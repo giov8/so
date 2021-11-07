@@ -9,7 +9,7 @@
 #include <ucontext.h>		// biblioteca POSIX de trocas de contexto
 #include "queue.h"		// biblioteca de filas genéricas
 
-enum states_e {READY, EXITED, SUSPENDED} ;
+enum states_e {READY, EXITED, SUSPENDED, SLEEPING} ;
 
 // Estrutura que define um Task Control Block (TCB)
 typedef struct task_t
@@ -23,8 +23,9 @@ typedef struct task_t
    unsigned int start_time ;      // momento de inicio da tarefa
    unsigned int exit_time ;       // momento de fim da tarefa
    unsigned int processor_time ;  // acumulado do tempo de processador da tarefa
+   unsigned int awakening_time ;  // O tempo que a tarefa adormecida devera acordar 
    unsigned int activations ;     // quantidade de vezes que a tarefa foi acionada
-   struct task_t *join_queue ;     // Fila que guarda todas as tarefas que estão esperando essa tarefa terminar
+   struct task_t *join_queue ;    // Fila que guarda todas as tarefas que estão esperando essa tarefa terminar
    int exit_code ;                // Código de encerramento que a tarefa recebeu
 } task_t ;
 

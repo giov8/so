@@ -4,6 +4,7 @@
 // Operações em uma fila genérica.
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "queue.h"
 
@@ -124,12 +125,12 @@ int queue_remove (queue_t **queue, queue_t *elem)
     }
 
     if ((*queue) == NULL) {
-        fprintf(stderr, "ERRO: A fila está vazia.\n");
+        fprintf(stderr, "ERRO queue_remove:: A fila está vazia.\n");
         return -4;
     }
 
     if ((elem->next == NULL) || (elem->prev == NULL)) {
-        fprintf(stderr, "ERRO: Elemento não está em uma fila.\n");
+        fprintf(stderr, "ERRO queue_remove:: Elemento não está em uma fila.\n");
         return -5;
     }
 

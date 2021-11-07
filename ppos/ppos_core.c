@@ -16,7 +16,7 @@
 
 int TaskIDCounter, UserTasks ;                             // contador de IDs para criação de tarefas e quantidade de tarefas do usuário
 task_t MainTask, DispatcherTask ;                          // Tarefa principal e Dispatcher
-task_t *CurrentTask, *ReadyQueue ;                         // aponta para tarefa atual e para a tarefa que tem o Dispatcher
+task_t *CurrentTask, *ReadyQueue, *SleepingQueue ;         // aponta para tarefa atual, para fila de prontas e fila de dormentes
 struct sigaction action ;                                  // define um tratador de sinal 
 struct itimerval timer ;                                   // estrutura de inicialização do timer
 unsigned int TicksRemaining, TicksTimer ;                  // ticks que restam para a tarefa atual executar e o total de ticks que aconteceram no programa
@@ -29,6 +29,7 @@ int CoreFunctionAtivated;                                  // booleano que defin
 void handler (int signum)
 {
     TicksTimer++ ;
+    //printf("syst %d\n", systime ());
 
     // não faz preempção se estiver rodando uma tarefa do sistema/core
     if(CoreFunctionAtivated)
@@ -84,15 +85,39 @@ void perform_task_aging (task_t *task, int task_aging)
     } while (task != first) ;
 }
 
+// Verifica se está na hora e acorda as tarefas que precisam ser acordadas
+void perform_task_awakening ()
+{
+    if (!SleepingQueue) return;
+
+    task_t *task = SleepingQueue ;
+    task_t *next ;
+    do
+    {
+        next = task->next ;
+
+        if (task->awakening_time <= systime ())
+       {
+            task->state = READY ;
+
+            // Remove da fila de dormentes
+            queue_remove((queue_t **) &SleepingQueue, (queue_t *) task)  ;
+
+            // Adiciona na fila de prontas
+            queue_append ((queue_t **) &ReadyQueue, (queue_t *) task) ; 
+       }
+
+        if (task == next) break ;
+        task = next ;
+    } while ( task != SleepingQueue) ;
+}
+
 // Faz o escalonamento de tarefas
 task_t* scheduler()
 {
     if (!ReadyQueue)
     {
-        #ifdef DEBUG
-            printf("PPOS: scheduler encontrou fila de prontas vazias") ;
-        #endif
-
+        perform_task_awakening () ;
         return NULL ;
     }
     
@@ -101,6 +126,7 @@ task_t* scheduler()
     task_t* task = ReadyQueue;
 
     perform_task_aging (ReadyQueue, ALPHA_AGING) ;
+    perform_task_awakening () ;
 
     do
     {
@@ -148,6 +174,7 @@ void dispatcher ()
 
     while (UserTasks > 0)
     {
+        CoreFunctionAtivated = 1 ;
         next = scheduler() ;
         if (next)
         {
@@ -165,20 +192,16 @@ void dispatcher ()
                     break ;
                 
                 case SUSPENDED:
-                    printf("Entrou em uma tarefa suspensa\n") ;
+                    printf("Entrou em uma tarefa suspensa na fila de prontas\n") ;
+                    break ;
+
+                case SLEEPING:
                     break ;
 
                 default:
                     perror("Estado da tarefa está inválido.") ;
                     exit (1) ;
             }
-        }
-        else
-        {
-            #ifdef DEBUG
-                printf ("PPOS: Proxima tarefa devolvida como nula\n") ;
-            #endif
-            break ;
         }
     }
     task_exit (0) ; 
@@ -363,7 +386,7 @@ void task_exit (int exitCode)
     }
 
     printf("Task %d exit: execution time %u ms, processor time %u ms, %u ativations\n",
-        CurrentTask->id, CurrentTask->exit_time - CurrentTask->start_time, CurrentTask->processor_time, CurrentTask->activations) ;
+            CurrentTask->id, CurrentTask->exit_time - CurrentTask->start_time, CurrentTask->processor_time, CurrentTask->activations) ;
 
     task_yield () ;
 }
@@ -387,8 +410,10 @@ int task_switch (task_t *task)
 
     CurrentTask = task ;                                                // é preciso a mudar variável global antes de mudar de contexto
     CurrentTask->activations++;                                         // aciona ativação da tarefa
+
     ProcessorYieldTime = systime ();                                    // guarda o momento que o processador foi entregue para a tarefa
     TicksRemaining = QUANTUM_SIZE ;                                     // a tarefa recebera um quantum para executar
+
     CoreFunctionAtivated = 0 ;
     swapcontext (old_current_task, &task->context) ;
 
@@ -420,7 +445,7 @@ void task_yield ()
     #endif
     
     if (CurrentTask == &DispatcherTask)
-    {   // Dispatcher agora será a ultima task, então ela que sairá da tarefa.
+    {   // Dispatcher agora será a ultima tarefa, então ela que termina o programa.
         exit(0) ;
     }
 
@@ -483,16 +508,10 @@ int task_getprio (task_t *task)
 // a tarefa corrente aguarda o encerramento de outra task
 int task_join (task_t *task)
 {
-    if (task == NULL)
-    {
-        return -1 ;
-    }
+    CoreFunctionAtivated = 1 ;
 
-    if (CurrentTask == NULL)
-    {
-        return -1 ;
-    }
-
+    if (task == NULL) return -1 ;
+    if (CurrentTask == NULL) return -1 ;
     if (task->state == EXITED)
     {
         #ifdef DEBUG
@@ -505,7 +524,6 @@ int task_join (task_t *task)
         printf("A tarefa %d solitou task_join() e está esperando a tarefa %d\n", CurrentTask->id, task->id) ;
     #endif
 
-    CoreFunctionAtivated = 1 ;
     // Remove da fila de prontas
     queue_remove((queue_t **) &ReadyQueue, (queue_t *) CurrentTask) ;
 
@@ -515,4 +533,38 @@ int task_join (task_t *task)
     task_yield() ;
 
     return task->exit_code ;  
+}
+
+// suspende a tarefa corrente por t milissegundos
+void task_sleep (int t)
+{
+    CoreFunctionAtivated = 1 ;
+
+    if (t < 0)
+    {
+        perror("task_sleep: Valor de t inválido") ;
+        return ;
+    }
+
+    if (CurrentTask == NULL)
+    {
+        perror("task_sleep: Valor de CurrentTask inválida") ;
+        return ;
+    }
+
+    #ifdef DEBUG
+        printf("A tarefa %d dormirá por %d\n", CurrentTask->id, t) ;
+    #endif
+
+    // Remove da fila de prontas
+    queue_remove((queue_t **) &ReadyQueue, (queue_t *) CurrentTask) ; 
+
+    // Adiciona na fila de dormentes
+    queue_append ((queue_t **) &SleepingQueue, (queue_t *) CurrentTask) ; 
+
+    // Calcula o momento que a tarefa deve acordar
+    CurrentTask->awakening_time = systime () + t ;
+
+    CurrentTask->state = SLEEPING ;
+    task_yield() ;
 }
